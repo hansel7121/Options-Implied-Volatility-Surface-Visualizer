@@ -106,10 +106,16 @@ def get_strikes():
 
 def volatility_surface(strikes):
     surface = []
-    for exp in exps[3:30]:
-        chain = voo.option_chain(exp)
+    count = 0
+    i = 0
+    while count < 8:
+        i += 1
+        chain = voo.option_chain(exps[i])
         calls = chain.calls
-        days_to_exp = (pd.to_datetime(exp) - pd.to_datetime("today")).days
+        days_to_exp = (pd.to_datetime(exps[i]) - pd.to_datetime("today")).days
+        if days_to_exp < 30:
+            continue
+        count += 1
         t_normalized = days_to_exp / 365
         calls['mid_price'] = (calls['bid'] + calls['ask']) / 2
 
@@ -117,12 +123,12 @@ def volatility_surface(strikes):
             contract_row = calls[calls['strike'] == strike]
             if not contract_row.empty:
                 iv = calculate_iv(contract_row['mid_price'].iloc[0], current_price, strike, t_normalized, risk_free_rate, dividend_yield, option_type="call")
-                surface.append({"strike": strike, "expiration": exp, "iv": iv})
+                surface.append({"strike": strike, "expiration": exps[i], "iv": iv})
             else:
                 pass
     surface = pd.DataFrame(surface)
     surface = surface.pivot(index="strike", columns="expiration", values="iv")
-    surface = surface.dropna()
+    surface = surface.interpolate(method='linear', axis=1)
     surface.to_csv('vol_surface.csv')
     return surface
 
@@ -143,7 +149,7 @@ def plot_surface(surface):
     )
     fig.show(renderer="browser")
 
-ticker ="VOO"
+ticker = "VOO"
 voo = yf.Ticker(ticker)
 current_price = voo.history(period="1d")["Close"].iloc[-1]
 exps = voo.options
