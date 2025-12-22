@@ -32,25 +32,44 @@ def plot_implied_volatility_strikes(expiration):
     chain = voo.option_chain(expiration)
     calls = chain.calls
     puts = chain.puts
-    call_ivs = []
-    put_ivs = []
-    for i in range(len(calls)):
-        call_iv = calculate_iv((calls["bid"].iloc[i] + calls["ask"].iloc[i]) / 2, current_price, calls["strike"].iloc[i], (pd.to_datetime(expiration) - pd.to_datetime("today")).days / 365, risk_free_rate, dividend_yield, option_type="call")
-        call_ivs.append((calls["strike"].iloc[i], call_iv))
-    for i in range(len(puts)):
-        put_iv = calculate_iv((puts["bid"].iloc[i] + puts["ask"].iloc[i]) / 2, current_price, puts["strike"].iloc[i], (pd.to_datetime(expiration) - pd.to_datetime("today")).days / 365, risk_free_rate, dividend_yield, option_type="put")
-        put_ivs.append((puts["strike"].iloc[i], put_iv))
-    call_ivs = pd.DataFrame(call_ivs, columns=["strike", "iv"])
-    put_ivs = pd.DataFrame(put_ivs, columns=["strike", "iv"])
-    plt.plot(call_ivs["strike"], call_ivs["iv"], label="Call IV")
-    plt.plot(put_ivs["strike"], put_ivs["iv"], label="Put IV")
+    ivs = []
+    all_strikes = sorted(list(set(calls["strike"].tolist() + puts["strike"].tolist())))
+    for strike in all_strikes:
+        if strike < current_price:
+            row = puts[puts["strike"] == strike]
+            if not row.empty:
+                price = (row["bid"].iloc[0] + row["ask"].iloc[0]) / 2
+                option_type = "put"
+            else:
+                continue
+        else:
+            row = calls[calls["strike"] == strike]
+            if not row.empty:
+                price = (row["bid"].iloc[0] + row["ask"].iloc[0]) / 2
+                option_type = "call"
+            else:
+                continue
+        iv = calculate_iv(
+            price,
+            current_price,
+            strike,
+            (pd.to_datetime(expiration) - pd.to_datetime("today")).days / 365,
+            risk_free_rate,
+            dividend_yield,
+            option_type=option_type,
+        )
+
+        ivs.append((strike, iv))
+    iv_df = pd.DataFrame(ivs, columns=["strike", "iv"])
+    plt.plot(iv_df["strike"], iv_df["iv"], label="Implied Volatility (OTM Splice)")
     plt.title("Implied Volatility")
     plt.legend()
     plt.xlabel("Strike")
     plt.ylabel("Implied Volatility")
     plt.show()
 
-def plot_implied_volatility_expirations(strike_price):
+
+def plot_implied_volatility_expirations():
     ivs = []
 
     for exp in exps[:12]:
@@ -61,10 +80,12 @@ def plot_implied_volatility_expirations(strike_price):
         calls = chain.calls
         puts = chain.puts
 
-        atm_calls = calls.iloc[(calls["strike"] - current_price).abs().argsort()[:1]].iloc[
+        atm_calls = calls.iloc[
+            (calls["strike"] - current_price).abs().argsort()[:1]
+        ].iloc[0]
+        atm_puts = puts.iloc[(puts["strike"] - current_price).abs().argsort()[:1]].iloc[
             0
         ]
-        atm_puts = puts.iloc[(puts["strike"] - current_price).abs().argsort()[:1]].iloc[0]
 
         call_price = (atm_calls["bid"] + atm_calls["ask"]) / 2
         put_price = (atm_puts["bid"] + atm_puts["ask"]) / 2
@@ -91,7 +112,6 @@ def plot_implied_volatility_expirations(strike_price):
         ivs.append((days_to_exp, call_iv, put_iv))
     ivs = pd.DataFrame(ivs, columns=["days_to_exp", "call_iv", "put_iv"])
 
-
     plt.plot(ivs["days_to_exp"], ivs["call_iv"], label="Call IV")
     plt.plot(ivs["days_to_exp"], ivs["put_iv"], label="Put IV")
     plt.xlabel("Days to Expiration")
@@ -99,10 +119,12 @@ def plot_implied_volatility_expirations(strike_price):
     plt.legend()
     plt.show()
 
+
 def get_strikes():
-    chain = voo.option_chain(exps[0])
+    chain = voo.option_chain()
     calls = chain.calls
     return calls["strike"].unique()
+
 
 def volatility_surface(strikes):
     surface = []
@@ -117,20 +139,29 @@ def volatility_surface(strikes):
             continue
         count += 1
         t_normalized = days_to_exp / 365
-        calls['mid_price'] = (calls['bid'] + calls['ask']) / 2
+        calls["mid_price"] = (calls["bid"] + calls["ask"]) / 2
 
         for strike in strikes:
-            contract_row = calls[calls['strike'] == strike]
+            contract_row = calls[calls["strike"] == strike]
             if not contract_row.empty:
-                iv = calculate_iv(contract_row['mid_price'].iloc[0], current_price, strike, t_normalized, risk_free_rate, dividend_yield, option_type="call")
+                iv = calculate_iv(
+                    contract_row["mid_price"].iloc[0],
+                    current_price,
+                    strike,
+                    t_normalized,
+                    risk_free_rate,
+                    dividend_yield,
+                    option_type="call",
+                )
                 surface.append({"strike": strike, "expiration": exps[i], "iv": iv})
             else:
                 pass
     surface = pd.DataFrame(surface)
     surface = surface.pivot(index="strike", columns="expiration", values="iv")
-    surface = surface.interpolate(method='linear', axis=1)
-    surface.to_csv('vol_surface.csv')
+    surface = surface.dropna()
+    surface.to_csv("vol_surface.csv")
     return surface
+
 
 def plot_surface(surface):
     surface.columns = pd.to_datetime(surface.columns)
@@ -140,14 +171,15 @@ def plot_surface(surface):
 
     fig = go.Figure(data=[go.Surface(z=z_data, x=x_data, y=y_data)])
     fig.update_layout(
-        title='Volatility Surface',
+        title="Volatility Surface",
         scene=dict(
-            xaxis_title='Expiration',
-            yaxis_title='Strike',
-            zaxis_title='Implied Volatility'
+            xaxis_title="Expiration",
+            yaxis_title="Strike",
+            zaxis_title="Implied Volatility",
         ),
     )
     fig.show(renderer="browser")
+
 
 ticker = "VOO"
 voo = yf.Ticker(ticker)
@@ -160,4 +192,4 @@ surface = volatility_surface(strikes)
 plot_surface(surface)
 
 plot_implied_volatility_strikes(exps[0])
-plot_implied_volatility_expirations(current_price)
+plot_implied_volatility_expirations()
